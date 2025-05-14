@@ -110,6 +110,9 @@ class ChatSnowflakeCortex(BaseChatModel):
     session: Any = None
     """Snowpark session object."""
 
+    #use_existing_session: bool = False
+    #"""Flag to indicate whether to use an existing session or create a new one"""
+
     model: str = "mistral-large"
     """Snowflake cortex hosted LLM model name, defaulted to `mistral-large`.
         Refer to docs for more options. Also note, not all models support 
@@ -144,6 +147,9 @@ class ChatSnowflakeCortex(BaseChatModel):
     """Automatically inferred from env var `SNOWFLAKE_WAREHOUSE` if not provided."""
     snowflake_role: Optional[str] = Field(default=None, alias="role")
     """Automatically inferred from env var `SNOWFLAKE_ROLE` if not provided."""
+    snowflake_authenticator: Optional[str] = Field(default=None, alias="authenticator")
+    """Automatically inferred from env var `SNOWFLAKE_AUTHENTICATOR` if not provided."""
+        
 
     def bind_tools(
         self,
@@ -184,13 +190,26 @@ class ChatSnowflakeCortex(BaseChatModel):
                 `pip install snowflake-snowpark-python`
                 """
             )
-
+        
+        # If session was already provided, skip credential validation
+        if isinstance(values.get("session"), Session):
+            #values["use_existing_session"] = True
+            return values
+        
         values["snowflake_username"] = get_from_dict_or_env(
             values, "snowflake_username", "SNOWFLAKE_USERNAME"
         )
-        values["snowflake_password"] = convert_to_secret_str(
-            get_from_dict_or_env(values, "snowflake_password", "SNOWFLAKE_PASSWORD")
-        )
+
+        # Authentication methods handling
+        if values.get("snowflake_authenticator"):
+            values["snowflake_authenticator"] = get_from_dict_or_env(
+                values, "snowflake_authenticator", "SNOWFLAKE_AUTHENTICATOR"
+            )
+        else:
+            values["snowflake_password"] = convert_to_secret_str(
+                get_from_dict_or_env(values, "snowflake_password", "SNOWFLAKE_PASSWORD")
+            )
+
         values["snowflake_account"] = get_from_dict_or_env(
             values, "snowflake_account", "SNOWFLAKE_ACCOUNT"
         )
@@ -210,13 +229,17 @@ class ChatSnowflakeCortex(BaseChatModel):
         connection_params = {
             "account": values["snowflake_account"],
             "user": values["snowflake_username"],
-            "password": values["snowflake_password"].get_secret_value(),
             "database": values["snowflake_database"],
             "schema": values["snowflake_schema"],
             "warehouse": values["snowflake_warehouse"],
             "role": values["snowflake_role"],
             "client_session_keep_alive": "True",
         }
+
+        if values.get("snowflake_authenticator"):
+            connection_params["authenticator"] = values["snowflake_authenticator"]
+        else:
+            connection_params["password"] = values["snowflake_password"].get_secret_value()
 
         try:
             values["session"] = Session.builder.configs(connection_params).create()
